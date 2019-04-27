@@ -30,6 +30,8 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -134,10 +136,14 @@ public class LocalBookKeeper {
                     .connectString(zkHost + ":" + zkPort)
                     .sessionTimeoutMs(zkSessionTimeOut)
                     .build()) {
-            List<Op> multiOps = Lists.newArrayListWithExpectedSize(3);
             String zkLedgersRootPath = ZKMetadataDriverBase.resolveZkLedgersRootPath(baseConf);
-            multiOps.add(
-                Op.create(zkLedgersRootPath, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT));
+            Path zkLedgersConfigPath = Paths.get(zkLedgersRootPath);
+            List<Op> multiOps = Lists.newArrayListWithExpectedSize(zkLedgersConfigPath.getNameCount() + 2);
+            for(int i = 1; i <= zkLedgersConfigPath.getNameCount(); i++) {
+                multiOps.add(
+                        Op.create("/" + zkLedgersConfigPath.subpath(0,i).toString(),
+                                new byte[0],Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT));
+            }
             multiOps.add(
                 Op.create(zkLedgersRootPath + "/" + AVAILABLE_NODE,
                     new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT));
