@@ -40,6 +40,9 @@ import org.apache.bookkeeper.meta.AbstractZkLedgerManagerFactory;
 import org.apache.bookkeeper.meta.HierarchicalLedgerManagerFactory;
 import org.apache.bookkeeper.meta.LedgerManagerFactory;
 import org.apache.bookkeeper.meta.LongHierarchicalLedgerManagerFactory;
+import org.apache.bookkeeper.net.ScriptBasedMapping;
+import org.apache.bookkeeper.stats.NullStatsProvider;
+import org.apache.bookkeeper.stats.StatsProvider;
 import org.apache.bookkeeper.util.EntryFormatter;
 import org.apache.bookkeeper.util.LedgerIdFormatter;
 import org.apache.bookkeeper.util.StringEntryFormatter;
@@ -184,6 +187,14 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
 
     // option to limit stats logging
     public static final String LIMIT_STATS_LOGGING = "limitStatsLogging";
+
+    // The bookie pod name in the kubernetes environment
+    public static final String BOOKIE_KUBERNETES_POD_NAME = "bookiePodName";
+    public static final String BOOKIE_DEFAULT_KUBERNETES_NAMESPACE = "bookieKubernetesNamespace";
+
+    // Generic DNS resolver
+    public static final String DNS_RESOLVER_CLASS_FOR_BOOKIE_REGISTRATION = "dnsResolverClassForBookieRegistration";
+    public static final String REPP_DNS_RESOLVER_CLASS = "reppDnsResolverClass";
 
     protected AbstractConfiguration() {
         super();
@@ -929,7 +940,24 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
     }
 
     /**
-     * Sets the flag to ignore usage of localnode in placement policy.
+     * Get dns resolver name.
+     */
+    public String getDnsResolverClassForBookieRegistration() {
+        /**
+         * Get DnsResolverClass for Bookie Registration
+         */
+        return getString(DNS_RESOLVER_CLASS_FOR_BOOKIE_REGISTRATION, ScriptBasedMapping.class.getName());
+    }
+
+    /**
+     * Set dns resolver name.
+     */
+    public void setDnsResolverClassForBookieRegistration(String dnsResolver) {
+        setProperty(DNS_RESOLVER_CLASS_FOR_BOOKIE_REGISTRATION, dnsResolver);
+    }
+
+    /**
+     * Trickery to allow inheritance with fluent style.
      */
     public void setIgnoreLocalNodeInPlacementPolicy(boolean ignoreLocalNodeInPlacementPolicy) {
         setProperty(IGNORE_LOCAL_NODE_IN_PLACEMENT_POLICY, ignoreLocalNodeInPlacementPolicy);

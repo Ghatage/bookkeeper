@@ -48,6 +48,7 @@ import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,7 +72,9 @@ import org.apache.bookkeeper.bookie.LedgerDirsManager.LedgerDirsListener;
 import org.apache.bookkeeper.bookie.LedgerDirsManager.NoWritableLedgerDirException;
 import org.apache.bookkeeper.bookie.stats.BookieStats;
 import org.apache.bookkeeper.bookie.storage.ldb.DbLedgerStorage;
+import org.apache.bookkeeper.common.util.ReflectionUtils;
 import org.apache.bookkeeper.common.util.Watcher;
+import org.apache.bookkeeper.conf.Configurable;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.discover.RegistrationManager;
 import org.apache.bookkeeper.meta.LedgerManager;
@@ -81,6 +84,7 @@ import org.apache.bookkeeper.meta.MetadataDrivers;
 import org.apache.bookkeeper.meta.exceptions.MetadataException;
 import org.apache.bookkeeper.net.BookieSocketAddress;
 import org.apache.bookkeeper.net.DNS;
+import org.apache.bookkeeper.net.DNSToSwitchMapping;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.WriteCallback;
 import org.apache.bookkeeper.stats.NullStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
@@ -331,22 +335,13 @@ public class Bookie extends BookieCriticalThread {
         return addresses;
     }
 
-    static Versioned<Cookie> readAndVerifyCookieFromRegistrationManager(
-            Cookie masterCookie, RegistrationManager rm,
-            List<BookieSocketAddress> addresses, boolean allowExpansion)
-            throws BookieException {
+    static Versioned<Cookie> readCookieFromRegistrationManager(RegistrationManager rm,
+            List<BookieSocketAddress> addresses) throws BookieException {
         Versioned<Cookie> rmCookie = null;
         for (BookieSocketAddress address : addresses) {
             try {
                 rmCookie = Cookie.readFromRegistrationManager(rm, address);
-                // If allowStorageExpansion option is set, we should
-                // make sure that the new set of ledger/index dirs
-                // is a super set of the old; else, we fail the cookie check
-                if (allowExpansion) {
-                    masterCookie.verifyIsSuperSet(rmCookie.getValue());
-                } else {
-                    masterCookie.verify(rmCookie.getValue());
-                }
+                return rmCookie;
             } catch (CookieNotFoundException e) {
                 continue;
             }
@@ -354,8 +349,25 @@ public class Bookie extends BookieCriticalThread {
         return rmCookie;
     }
 
+    static void verifyCookie(Cookie masterCookie, Cookie rmCookie, boolean allowExpansion, ServerConfiguration conf)
+            throws BookieException {
+            try {
+                // If allowStorageExpansion option is set, we should
+                // make sure that the new set of ledger/index dirs
+                // is a super set of the old; else, we fail the cookie check
+                if (allowExpansion) {
+                    masterCookie.verifyIsSuperSet(rmCookie, conf);
+                } else {
+                    masterCookie.verify(rmCookie, conf);
+                }
+            } catch (InvalidCookieException e) {
+                LOG.error("Error verifying Cookie: " + e.getMessage());
+                throw e;
+            }
+    }
+
     private static Pair<List<File>, List<Cookie>> verifyAndGetMissingDirs(
-            Cookie masterCookie, boolean allowExpansion, List<File> dirs)
+            Cookie masterCookie, boolean allowExpansion, List<File> dirs, ServerConfiguration conf)
             throws InvalidCookieException, IOException {
         List<File> missingDirs = Lists.newArrayList();
         List<Cookie> existedCookies = Lists.newArrayList();
@@ -364,9 +376,9 @@ public class Bookie extends BookieCriticalThread {
             try {
                 Cookie c = Cookie.readFromDirectory(dir);
                 if (allowExpansion) {
-                    masterCookie.verifyIsSuperSet(c);
+                    masterCookie.verifyIsSuperSet(c, conf);
                 } else {
-                    masterCookie.verify(c);
+                    masterCookie.verify(c, conf);
                 }
                 existedCookies.add(c);
             } catch (FileNotFoundException fnf) {
@@ -405,20 +417,69 @@ public class Bookie extends BookieCriticalThread {
             // 1. retrieve the instance id
             String instanceId = rm.getClusterInstanceId();
 
-            // 2. build the master cookie from the configuration
-            Cookie.Builder builder = Cookie.generateCookie(conf);
-            if (null != instanceId) {
-                builder.setInstanceId(instanceId);
+            // 2. retrieve networkLocation from configured DNS Resolver
+            String networkLocation = null;
+            String configuredDNSResolver = conf.getDnsResolverClassForBookieRegistration();
+            try {
+                DNSToSwitchMapping dnsResolver = ReflectionUtils.newInstance(configuredDNSResolver,
+                        DNSToSwitchMapping.class);
+                if (dnsResolver instanceof Configurable) {
+                    ((Configurable) dnsResolver).setConf(conf);
+                }
+
+                String podName = InetAddress.getLocalHost().getHostName();
+                List <String> resolvedNetworkLocation = dnsResolver.resolve(Collections.singletonList(podName));
+                networkLocation = resolvedNetworkLocation.get(0);
+            } catch (RuntimeException re) {
+                LOG.warn("DNS resolver configured to {}. Unable to instantiate DNS resolver: {}",
+                        configuredDNSResolver, re.getMessage());
+                if (conf.getEnforceCookieNetworkLocationCheck()) {
+                    LOG.error("Config option enforceNetworkLocationCheck is set to true."
+                            + " Failing boot up as DNS resolver is required to set network location");
+                    throw re;
+                }
             }
-            Cookie masterCookie = builder.build();
-            boolean allowExpansion = conf.getAllowStorageExpansion();
+
+            Cookie.Builder builder = Cookie.generateCookie(conf);
 
             // 3. read the cookie from registration manager. it is the `source-of-truth` of a given bookie.
             //    if it doesn't exist in registration manager, this bookie is a new bookie, otherwise it is
             //    an old bookie.
             List<BookieSocketAddress> possibleBookieIds = possibleBookieIds(conf);
-            final Versioned<Cookie> rmCookie = readAndVerifyCookieFromRegistrationManager(
-                        masterCookie, rm, possibleBookieIds, allowExpansion);
+            final Versioned<Cookie> rmCookie = readCookieFromRegistrationManager(rm, possibleBookieIds);
+
+            // Is there is a cookie in registration manager, check its version against the generated cookie version
+            // If different, set generated cookie version to the one from registration manager
+            // If there is no cookie in the registration manager, we proceed with no changes to generated cookie
+            if (null != rmCookie) {
+                Cookie.Builder rmCookieBuilder = Cookie.newBuilder(rmCookie.getValue());
+
+                // Build the master cookie from the configuration
+                // set the layout version to cookie layout version of
+                // the cookie from registration manager if the versions are different
+                if (builder.getLayoutVersion() != rmCookieBuilder.getLayoutVersion()) {
+                    LOG.info("Bookie software version {} is different from version of the cookie in"
+                                    + " registration manager {} Running bookie in compatibility mode",
+                            builder.getLayoutVersion(), rmCookieBuilder.getLayoutVersion());
+                    builder.setLayoutVersion(rmCookieBuilder.getLayoutVersion());
+                }
+            }
+
+            // Instantiate fields introduced in particular cookie versions
+            if (null != instanceId && builder.getLayoutVersion() >= 4) {
+                builder.setInstanceId(instanceId);
+            }
+            if (null != networkLocation && builder.getLayoutVersion() >= 5) {
+                builder.setNetworkLocation(networkLocation);
+            }
+
+            Cookie masterCookie = builder.build();
+
+            boolean allowExpansion = conf.getAllowStorageExpansion();
+
+            if (null != rmCookie) {
+                verifyCookie(masterCookie, rmCookie.getValue(), allowExpansion, conf);
+            }
 
             // 4. check if the cookie appear in all the directories.
             List<File> missedCookieDirs = new ArrayList<>();
@@ -430,13 +491,13 @@ public class Bookie extends BookieCriticalThread {
             // 4.1 verify the cookies in journal directories
             Pair<List<File>, List<Cookie>> journalResult =
                 verifyAndGetMissingDirs(masterCookie,
-                                        allowExpansion, journalDirectories);
+                                        allowExpansion, journalDirectories, conf);
             missedCookieDirs.addAll(journalResult.getLeft());
             existingCookies.addAll(journalResult.getRight());
             // 4.2. verify the cookies in ledger directories
             Pair<List<File>, List<Cookie>> ledgerResult =
                 verifyAndGetMissingDirs(masterCookie,
-                                        allowExpansion, allLedgerDirs);
+                                        allowExpansion, allLedgerDirs, conf);
             missedCookieDirs.addAll(ledgerResult.getLeft());
             existingCookies.addAll(ledgerResult.getRight());
 

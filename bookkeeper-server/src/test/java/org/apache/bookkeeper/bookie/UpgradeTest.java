@@ -21,6 +21,7 @@
 
 package org.apache.bookkeeper.bookie;
 
+import static org.apache.bookkeeper.meta.MetadataDrivers.runFunctionWithRegistrationManager;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -30,20 +31,29 @@ import io.netty.buffer.Unpooled;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.PrintStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
 
 import org.apache.bookkeeper.client.ClientUtil;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.conf.TestBKConfiguration;
+import org.apache.bookkeeper.discover.RegistrationManager;
+import org.apache.bookkeeper.meta.exceptions.MetadataException;
+import org.apache.bookkeeper.net.BookieSocketAddress;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
 import org.apache.bookkeeper.test.PortManager;
 import org.apache.bookkeeper.util.IOUtils;
+import org.apache.bookkeeper.versioning.LongVersion;
+import org.apache.bookkeeper.versioning.Version;
+import org.apache.bookkeeper.versioning.Versioned;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +65,8 @@ public class UpgradeTest extends BookKeeperClusterTestCase {
     private static final Logger LOG = LoggerFactory.getLogger(FileInfo.class);
 
     private static final int bookiePort = PortManager.nextFreePort();
+    private static String journalDir;
+    private static String ledgerDir;
 
     public UpgradeTest() {
         super(0);
@@ -138,6 +150,19 @@ public class UpgradeTest extends BookKeeperClusterTestCase {
         }
     }
 
+    private String newDirectory() throws IOException {
+        return newDirectory(true);
+    }
+
+    private String newDirectory(boolean createCurDir) throws IOException {
+        File d = IOUtils.createTempDir("cookie", "tmpdir");
+        if (createCurDir) {
+            new File(d, "current").mkdirs();
+        }
+        tmpDirs.add(d);
+        return d.getPath();
+    }
+
     static File newV2JournalDirectory() throws Exception {
         File d = newV1JournalDirectory();
         createVersion2File(d);
@@ -204,6 +229,231 @@ public class UpgradeTest extends BookKeeperClusterTestCase {
         File ledgerDir = newV2LedgerDirectory();
         tmpDirs.add(ledgerDir);
         testUpgradeProceedure(zkUtil.getZooKeeperConnectString(), journalDir.getPath(), ledgerDir.getPath());
+    }
+
+    @Test
+    public void testNoNetworkLocationBookieBootup ()
+            throws BookieException, IOException {
+
+        ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
+        journalDir = newDirectory();
+        ledgerDir = newDirectory();
+
+        conf.setJournalDirName(journalDir)
+                .setLedgerDirNames(new String[] { ledgerDir })
+                .setBookiePort(bookiePort)
+                .setEnforceCookieNetworkLocationCheck(true)
+                .setMetadataServiceUri(zkUtil.getMetadataServiceUri());
+
+        // Bring up a bookie for the first time with networkLocation enforcement set
+        try {
+            Bookie b = new Bookie(conf);
+        } catch (InterruptedException | RuntimeException e) {
+            return;
+        }
+        fail("Not expected to reach here");
+    }
+
+    @Test
+    public void testOldCookieNewBookie() throws BookieException.UpgradeException {
+        ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
+        conf.setMetadataServiceUri(zkUtil.getMetadataServiceUri());
+
+        try {
+            runFunctionWithRegistrationManager(conf, rm -> {
+                try {
+                    oldCookieNewBookieWorker(conf, rm);
+                } catch (BookieException e) {
+                    fail("Bookie was expected to run in compatibility mode: " + e.getMessage());
+                } catch (IOException e) {
+                    fail("Failed to read Cookie, Bookie was expected to run in compatibility mode: " + e.getMessage());
+                }
+                return null;
+            });
+        } catch (MetadataException | ExecutionException e) {
+            throw new BookieException.UpgradeException(e);
+        }
+    }
+
+    private void oldCookieNewBookieWorker (ServerConfiguration conf, RegistrationManager rm)
+            throws BookieException, IOException {
+
+        journalDir = newDirectory();
+        ledgerDir = newDirectory();
+
+        conf.setJournalDirName(journalDir)
+                .setLedgerDirNames(new String[] { ledgerDir })
+                .setBookiePort(bookiePort)
+                .setMetadataServiceUri(zkUtil.getMetadataServiceUri());
+
+        Cookie.Builder v4builder = Cookie.generateCookie(conf);
+        v4builder = v4builder.setLayoutVersion(4);
+        Cookie v4Cookie = v4builder.build();
+
+        // Write v4 cookie to dirs
+        v4Cookie.writeToDirectory(new File(journalDir, "current"));
+        v4Cookie.writeToDirectory(new File(ledgerDir, "current"));
+
+        // Write v4 cookie to ZK
+        v4Cookie.writeToRegistrationManager(rm, conf, Version.NEW);
+
+        // Bring up a bookie with v5 software. It should come up without errors.
+        // Assuming the networkLocation etc fields are null
+        try {
+            Bookie b = new Bookie(conf);
+        } catch (InterruptedException | RuntimeException e) {
+            fail("Bookie was expected to run in compatibility mode: " + e.getMessage());
+        }
+    }
+
+    @Test
+    public void testEnforceNetworkLocation() throws BookieException.UpgradeException {
+        ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
+        conf.setMetadataServiceUri(zkUtil.getMetadataServiceUri());
+
+        try {
+            runFunctionWithRegistrationManager(conf, rm -> {
+                try {
+                    enforceNetworkLocationWorker(conf, rm);
+                } catch (BookieException e) {
+                    fail("Bookie was expected to run in compatibility mode: " + e.getMessage());
+                } catch (IOException e) {
+                    fail("Failed to read Cookie, Bookie was expected to run in compatibility mode: " + e.getMessage());
+                }
+                return null;
+            });
+        } catch (MetadataException | ExecutionException e) {
+            throw new BookieException.UpgradeException(e);
+        }
+    }
+
+    private void enforceNetworkLocationWorker(ServerConfiguration conf, RegistrationManager rm)
+            throws BookieException, IOException {
+
+        journalDir = newDirectory();
+        ledgerDir = newDirectory();
+
+        conf.setJournalDirName(journalDir)
+                .setLedgerDirNames(new String[] { ledgerDir })
+                .setBookiePort(bookiePort)
+                .setEnforceCookieNetworkLocationCheck(false)
+                .setMetadataServiceUri(zkUtil.getMetadataServiceUri());
+
+        Cookie.Builder builder = Cookie.generateCookie(conf);
+        builder = builder.setNetworkLocation("someaddress/az42");
+        Cookie cookie = builder.build();
+
+        // Write cookie with networkLocation to ZK and local directories
+        cookie.writeToRegistrationManager(rm, conf, Version.NEW);
+
+        cookie.writeToDirectory(new File(journalDir, "current"));
+        cookie.writeToDirectory(new File(ledgerDir, "current"));
+
+        // By default, enforcement check on networkLocation verification is false
+        // This should let this bookie boot up even when networkLocation for its cookie is set to 'someaddress/az42'
+        try {
+            Bookie b = new Bookie(conf);
+        } catch (BookieException e) {
+            fail("Bookie was expected to run in compatibility mode: " + e.getMessage());
+        } catch (InterruptedException e) {
+            fail("Bookie was expected to run in compatibility mode: " + e.getMessage());
+        }
+
+        // Here we change the enforcement check on networkLocation verification to true
+        // This should fail the bookie boot up as the networkLocation for its cookie won't match 'someaddress/az42'
+        conf.setEnforceCookieNetworkLocationCheck(true);
+
+        try {
+            Bookie b = new Bookie(conf);
+        } catch (BookieException | RuntimeException e) {
+            return;
+        } catch (InterruptedException e) {
+            fail("Bookie was expected to run in compatibility mode: " + e.getMessage());
+        }
+        fail("Not expected reach here");
+    }
+    @Test
+    public void testMixedCookieVersionCluster() throws BookieException.UpgradeException {
+        ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
+        conf.setMetadataServiceUri(zkUtil.getMetadataServiceUri());
+
+        try {
+            runFunctionWithRegistrationManager(conf, rm -> {
+                try {
+                    mixedCookieVersionClusterWorker(conf, rm);
+                } catch (Exception e) {
+                    fail("Bookie was expected to run in compatibility mode: " + e.getMessage());
+                }
+                return null;
+            });
+        } catch (MetadataException | ExecutionException e) {
+            fail("Error running registration manager for the test" + e.getMessage());
+        }
+    }
+
+    private void mixedCookieVersionClusterWorker(ServerConfiguration conf, RegistrationManager rm) throws Exception {
+        numBookies = 3;
+        try {
+            startBKCluster(zkUtil.getMetadataServiceUri());
+
+            BookieSocketAddress oldBookieSocketAddress = bs.get(0).getLocalAddress();
+            Bookie oldBookie = bs.get(0).getBookie();
+            List<File> journalDirs = oldBookie.journalDirectories;
+            List<File> ledgerDirs = oldBookie.getLedgerDirsManager().getAllLedgerDirs();
+
+            // Read v5 cookie, modify it to v4, write it back to registration manager and on disk
+            Versioned<Cookie> clusterBookieCookie = Cookie.readFromRegistrationManager(rm, oldBookieSocketAddress);
+            Cookie.Builder v4builder = Cookie.newBuilder(clusterBookieCookie.getValue());
+            v4builder.setLayoutVersion(4);
+
+            Cookie v4Cookie = v4builder.build();
+            conf.setBookiePort(oldBookieSocketAddress.getPort());
+            Version version = (LongVersion) clusterBookieCookie.getVersion();
+
+            // Delete existing cookie for that particular bookie from ZK
+            clusterBookieCookie.getValue().deleteFromRegistrationManager(rm, conf, version);
+
+            // Write the v4 cookie to ZK
+            v4Cookie.writeToRegistrationManager(rm, conf, Version.NEW);
+
+            // Update all on disk Cookies to v4
+
+            // Updating the journal cookies
+            for (File journal : journalDirs) {
+                Cookie c = Cookie.readFromDirectory(journal);
+                Cookie.Builder builder = Cookie.newBuilder(c);
+                builder.setLayoutVersion(4);
+                Cookie v4JournalCookie = builder.build();
+                v4JournalCookie.writeToDirectory(journal);
+            }
+
+            // Updating the ledger cookies
+            for (File ledger : ledgerDirs) {
+                Cookie c = Cookie.readFromDirectory(ledger);
+                Cookie.Builder builder = Cookie.newBuilder(c);
+                builder.setLayoutVersion(4);
+                Cookie v4LedgerCookie = builder.build();
+                v4LedgerCookie.writeToDirectory(ledger);
+            }
+
+            // Restart the bookie whose cookies we changed
+            restartBookie(oldBookieSocketAddress);
+
+            // Go through all bookies, see that they are all up
+            // print cookie stored in ZK for them
+            for (int i = 0; i < numBookies; i++) {
+                BookieSocketAddress bookie = getBookie(i);
+
+                // If this is the restarted bookie with the older version
+                if (bookie.equals(oldBookieSocketAddress)) {
+                    Versioned<Cookie> clusterCookie = Cookie.readFromRegistrationManager(rm, bookie);
+                    String cookieVersion = clusterCookie.getValue().toString().split("\n", 2)[0];
+                    assertTrue("Bookie should be running in compatibility mode", cookieVersion.equals("4"));
+                }
+            }
+        } finally {
+            stopBKCluster();
+        }
     }
 
     @Test

@@ -66,20 +66,36 @@ import org.slf4j.LoggerFactory;
 public class Cookie {
     private static final Logger LOG = LoggerFactory.getLogger(Cookie.class);
 
-    static final int CURRENT_COOKIE_LAYOUT_VERSION = 4;
+    static final int CURRENT_COOKIE_LAYOUT_VERSION = 5;
     private final int layoutVersion;
     private final String bookieHost;
     private final String journalDirs;
     private final String ledgerDirs;
     private final String instanceId;
+    private final String networkLocation;
     private static final String SEPARATOR = "\t";
 
-    private Cookie(int layoutVersion, String bookieHost, String journalDirs, String ledgerDirs, String instanceId) {
+    private Cookie(int layoutVersion, String bookieHost, String journalDirs, String ledgerDirs, String instanceId,
+                   String networkLocation) {
         this.layoutVersion = layoutVersion;
         this.bookieHost = bookieHost;
         this.journalDirs = journalDirs;
         this.ledgerDirs = ledgerDirs;
         this.instanceId = instanceId;
+        this.networkLocation = networkLocation;
+    }
+
+    /**
+     * Used for serialization-deserialization of json representation for Cookie.
+     */
+    @SuppressWarnings("Unused")
+    public Cookie() {
+        this.layoutVersion = 0;
+        this.bookieHost = null;
+        this.journalDirs = null;
+        this.ledgerDirs = null;
+        this.instanceId = null;
+        this.networkLocation = null;
     }
 
     private static String encodeDirPaths(String[] dirs) {
@@ -100,6 +116,10 @@ public class Cookie {
 
     String[] getLedgerDirPathsFromCookie() {
         return decodeDirPathFromCookie(ledgerDirs);
+    }
+
+    public String getNetworkLocation() {
+        return networkLocation;
     }
 
     /**
@@ -124,7 +144,8 @@ public class Cookie {
         }
     }
 
-    private void verifyInternal(Cookie c, boolean checkIfSuperSet) throws BookieException.InvalidCookieException {
+    private void verifyInternal(Cookie c, boolean checkIfSuperSet, ServerConfiguration conf)
+            throws BookieException.InvalidCookieException {
         String errMsg;
         if (c.layoutVersion < 3 && c.layoutVersion != layoutVersion) {
             errMsg = "Cookie is of too old version " + c.layoutVersion;
@@ -133,22 +154,32 @@ public class Cookie {
         } else if (!(c.layoutVersion >= 3 && c.bookieHost.equals(bookieHost)
             && c.journalDirs.equals(journalDirs) && verifyLedgerDirs(c, checkIfSuperSet))) {
             errMsg = "Cookie [" + this + "] is not matching with [" + c + "]";
+            LOG.error(errMsg);
             throw new BookieException.InvalidCookieException(errMsg);
         } else if ((instanceId == null && c.instanceId != null)
                 || (instanceId != null && !instanceId.equals(c.instanceId))) {
             // instanceId should be same in both cookies
             errMsg = "instanceId " + instanceId
                     + " is not matching with " + c.instanceId;
+            LOG.error(errMsg);
+            throw new BookieException.InvalidCookieException(errMsg);
+        } else if ((conf.getEnforceCookieNetworkLocationCheck())
+                && ((networkLocation == null && c.networkLocation != null)
+                || (networkLocation != null && !networkLocation.equals(c.networkLocation)))) {
+            // networkLocation should be same in both cookies
+            errMsg = "networkLocation " + networkLocation
+                    + " is not matching with " + c.networkLocation;
+            LOG.error(errMsg);
             throw new BookieException.InvalidCookieException(errMsg);
         }
     }
 
-    public void verify(Cookie c) throws BookieException.InvalidCookieException {
-        verifyInternal(c, false);
+    public void verify(Cookie c, ServerConfiguration conf) throws BookieException.InvalidCookieException {
+        verifyInternal(c, false, conf);
     }
 
-    public void verifyIsSuperSet(Cookie c) throws BookieException.InvalidCookieException {
-        verifyInternal(c, true);
+    public void verifyIsSuperSet(Cookie c, ServerConfiguration conf) throws BookieException.InvalidCookieException {
+        verifyInternal(c, true, conf);
     }
 
     public String toString() {
@@ -162,15 +193,18 @@ public class Cookie {
         if (null != instanceId) {
             builder.setInstanceId(instanceId);
         }
+        if (null != networkLocation) {
+            builder.setNetworkLocation(networkLocation);
+        }
         StringBuilder b = new StringBuilder();
-        b.append(CURRENT_COOKIE_LAYOUT_VERSION).append("\n");
+        b.append(layoutVersion).append("\n");
         b.append(TextFormat.printToString(builder.build()));
         return b.toString();
     }
 
     private String toStringVersion3() {
         StringBuilder b = new StringBuilder();
-        b.append(CURRENT_COOKIE_LAYOUT_VERSION).append("\n")
+        b.append(layoutVersion).append("\n")
             .append(bookieHost).append("\n")
             .append(journalDirs).append("\n")
             .append(ledgerDirs).append("\n");
@@ -195,7 +229,7 @@ public class Cookie {
             cBuilder.setBookieHost(reader.readLine());
             cBuilder.setJournalDirs(reader.readLine());
             cBuilder.setLedgerDirs(reader.readLine());
-        } else if (layoutVersion >= 4) {
+        } else if (layoutVersion == 4) {
             CookieFormat.Builder cfBuilder = CookieFormat.newBuilder();
             TextFormat.merge(reader, cfBuilder);
             CookieFormat data = cfBuilder.build();
@@ -206,6 +240,22 @@ public class Cookie {
             if (null != data.getInstanceId() && !data.getInstanceId().isEmpty()) {
                 cBuilder.setInstanceId(data.getInstanceId());
             }
+        } else if (layoutVersion == 5) {
+            CookieFormat.Builder cfBuilder = CookieFormat.newBuilder();
+            TextFormat.merge(reader, cfBuilder);
+            CookieFormat data = cfBuilder.build();
+            cBuilder.setBookieHost(data.getBookieHost());
+            cBuilder.setJournalDirs(data.getJournalDir());
+            cBuilder.setLedgerDirs(data.getLedgerDirs());
+            // Since InstanceId and networkLocation are optional
+            if (null != data.getInstanceId() && !data.getInstanceId().isEmpty()) {
+                cBuilder.setInstanceId(data.getInstanceId());
+            }
+            if (null != data.getNetworkLocation() && !data.getNetworkLocation().isEmpty()) {
+                cBuilder.setNetworkLocation(data.getNetworkLocation());
+            }
+        } else {
+            throw new IOException("Invalid cookie layout version");
         }
         return cBuilder;
     }
@@ -387,17 +437,19 @@ public class Cookie {
         private String journalDirs = null;
         private String ledgerDirs = null;
         private String instanceId = null;
+        private String networkLocation = null;
 
         private Builder() {
         }
 
         private Builder(int layoutVersion, String bookieHost, String journalDirs, String ledgerDirs,
-                        String instanceId) {
+                        String instanceId, String networkLocation) {
             this.layoutVersion = layoutVersion;
             this.bookieHost = bookieHost;
             this.journalDirs = journalDirs;
             this.ledgerDirs = ledgerDirs;
             this.instanceId = instanceId;
+            this.networkLocation = networkLocation;
         }
 
         public Builder setLayoutVersion(int layoutVersion) {
@@ -425,8 +477,17 @@ public class Cookie {
             return this;
         }
 
+        public Builder setNetworkLocation(String networkLocation) {
+            this.networkLocation = networkLocation;
+            return this;
+        }
+
+        public int getLayoutVersion() {
+            return this.layoutVersion;
+        }
+
         public Cookie build() {
-            return new Cookie(layoutVersion, bookieHost, journalDirs, ledgerDirs, instanceId);
+            return new Cookie(layoutVersion, bookieHost, journalDirs, ledgerDirs, instanceId, networkLocation);
         }
     }
 
@@ -447,6 +508,6 @@ public class Cookie {
      */
     public static Builder newBuilder(Cookie oldCookie) {
         return new Builder(oldCookie.layoutVersion, oldCookie.bookieHost, oldCookie.journalDirs, oldCookie.ledgerDirs,
-                oldCookie.instanceId);
+                oldCookie.instanceId, oldCookie.networkLocation);
     }
 }

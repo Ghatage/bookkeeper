@@ -162,13 +162,13 @@ public class AdminCommand extends BookieCommand<AdminCommand.AdminFlags> {
                 }
                 Cookie newCookie = Cookie.newBuilder(oldCookie.getValue()).setBookieHost(newBookieId).build();
 
-                boolean hasCookieUpdatedInDirs = verifyCookie(newCookie, journalDirectories[0]);
+                boolean hasCookieUpdatedInDirs = verifyCookie(newCookie, journalDirectories[0], conf);
                 for (File dir : ledgerDirectories) {
-                    hasCookieUpdatedInDirs &= verifyCookie(newCookie, dir);
+                    hasCookieUpdatedInDirs &= verifyCookie(newCookie, dir, conf);
                 }
                 if (indexDirectories != ledgerDirectories) {
                     for (File dir : indexDirectories) {
-                        hasCookieUpdatedInDirs &= verifyCookie(newCookie, dir);
+                        hasCookieUpdatedInDirs &= verifyCookie(newCookie, dir, conf);
                     }
                 }
 
@@ -217,10 +217,10 @@ public class AdminCommand extends BookieCommand<AdminCommand.AdminFlags> {
         });
     }
 
-    private boolean verifyCookie(Cookie oldCookie, File dir) throws IOException {
+    private boolean verifyCookie(Cookie oldCookie, File dir, ServerConfiguration conf) throws IOException {
         try {
             Cookie cookie = Cookie.readFromDirectory(dir);
-            cookie.verify(oldCookie);
+            cookie.verify(oldCookie, conf);
         } catch (BookieException.InvalidCookieException e) {
             return false;
         }

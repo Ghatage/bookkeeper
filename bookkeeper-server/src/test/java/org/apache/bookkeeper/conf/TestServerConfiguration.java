@@ -152,4 +152,19 @@ public class TestServerConfiguration {
         conf.validate();
         assertEquals(1073741824, conf.getEntryLogSizeLimit());
     }
+
+    public void testDnsResolverClassDefault() {
+        ServerConfiguration conf = new ServerConfiguration();
+        assertTrue(conf.getDnsResolverClassForBookieRegistration()
+                .equals("org.apache.bookkeeper.net.ScriptBasedMapping"));
+    }
+
+    @Test
+    public void testDnsResolverKubernetes() {
+        ServerConfiguration conf = new ServerConfiguration();
+        String compare = "org.apache.bookkeeper.net.KubernetesMapping";
+        conf.setDnsResolverClassForBookieRegistration(compare);
+        assertTrue(conf.getDnsResolverClassForBookieRegistration()
+                .equals("org.apache.bookkeeper.net.KubernetesMapping"));
+    }
 }

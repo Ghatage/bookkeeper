@@ -146,6 +146,7 @@ public class ServerConfiguration extends AbstractConfiguration<ServerConfigurati
     protected static final String LISTENING_INTERFACE = "listeningInterface";
     protected static final String ALLOW_LOOPBACK = "allowLoopback";
     protected static final String ADVERTISED_ADDRESS = "advertisedAddress";
+    protected static final String ENFORCE_COOKIE_NETWORK_LOCATION_CHECK = "enforceCookieNetworkLocationCheck";
     protected static final String ALLOW_EPHEMERAL_PORTS = "allowEphemeralPorts";
 
     protected static final String JOURNAL_DIR = "journalDirectory";
@@ -1003,6 +1004,28 @@ public class ServerConfiguration extends AbstractConfiguration<ServerConfigurati
      */
     public ServerConfiguration setAdvertisedAddress(String advertisedAddress) {
         this.setProperty(ADVERTISED_ADDRESS, advertisedAddress);
+        return this;
+    }
+
+    /**
+     * Enforces verification of networkLocation property during Cookie verification.
+     * This property should be used while transitioning to public cloud
+     * If true, we also verify networkLocation and if there is conflict, fail cookie verification
+     * If false, we do not enforce networkLocation verification and not fail cookie verification on conflict
+     *
+     * @return whether we should enforce verification of networkLocation property during Cookie verification
+     */
+    public boolean getEnforceCookieNetworkLocationCheck() {
+        return this.getBoolean(ENFORCE_COOKIE_NETWORK_LOCATION_CHECK, false);
+    }
+
+    /**
+     * Configure the enforcement for networkLocation verification.
+     * @param val whether to enforce networkLocation verification
+     * @return server configuration
+     */
+    public ServerConfiguration setEnforceCookieNetworkLocationCheck(boolean val) {
+        this.setProperty(ENFORCE_COOKIE_NETWORK_LOCATION_CHECK, val);
         return this;
     }
 
