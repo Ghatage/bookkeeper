@@ -1196,10 +1196,12 @@ public class ServerConfiguration extends AbstractConfiguration<ServerConfigurati
      * @return ledger index dir name, if no index dirs provided return null
      */
     public String[] getIndexDirNames() {
-        if (!this.containsKey(INDEX_DIRS)) {
-            return null;
+
+        String[] indexDirs = this.getStringArray(INDEX_DIRS);
+        if ((null == indexDirs) || (0 == indexDirs.length)) {
+            return new String[] { "/tmp/bk-data" };
         }
-        return this.getStringArray(INDEX_DIRS);
+        return indexDirs;
     }
 
     /**

@@ -433,7 +433,7 @@ public class Bookie extends BookieCriticalThread {
                                         allowExpansion, journalDirectories);
             missedCookieDirs.addAll(journalResult.getLeft());
             existingCookies.addAll(journalResult.getRight());
-            // 4.2. verify the cookies in ledger directories
+            // 4.2. verify the cookies in ledger and index directories
             Pair<List<File>, List<Cookie>> ledgerResult =
                 verifyAndGetMissingDirs(masterCookie,
                                         allowExpansion, allLedgerDirs);
