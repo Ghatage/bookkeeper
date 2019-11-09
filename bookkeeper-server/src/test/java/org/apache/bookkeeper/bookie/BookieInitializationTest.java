@@ -168,6 +168,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
     private void testJournalReplayForBookieRestartInReadOnlyMode(int numOfJournalDirs) throws Exception {
         File tmpLedgerDir = createTempDir("DiskCheck", "test");
         File tmpJournalDir = createTempDir("DiskCheck", "test");
+        File tmpIndexDir = createTempDir("DiskCheck", "test");
 
         String[] journalDirs = new String[numOfJournalDirs];
         for (int i = 0; i < numOfJournalDirs; i++) {
@@ -177,6 +178,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = newServerConfiguration()
                 .setJournalDirsName(journalDirs)
                 .setLedgerDirNames(new String[] { tmpLedgerDir.getPath() })
+                .setIndexDirName(new String[] { tmpIndexDir.getPath() })
                 .setDiskCheckInterval(1000)
                 .setLedgerStorageClass(SortedLedgerStorage.class.getName())
                 .setAutoRecoveryDaemonEnabled(false)
@@ -283,6 +285,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
         conf.setJournalDirName(tmpDir.getPath())
             .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
             .setMetadataServiceUri(metadataServiceUri);
 
         RegistrationManager rm = mock(RegistrationManager.class);
@@ -610,6 +613,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         conf.setBookiePort(port)
             .setJournalDirName(tmpDir.getPath())
             .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
             .setMetadataServiceUri(metadataServiceUri);
         BookieServer bs1 = new BookieServer(conf);
         bs1.start();
@@ -640,6 +644,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         conf.setBookiePort(port)
             .setJournalDirName(tmpDir.getPath())
             .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
             .setMetadataServiceUri(metadataServiceUri);
 
         BookieConfiguration bkConf = new BookieConfiguration(conf);
@@ -677,6 +682,9 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         File ledgerDir = createTempDir("bookie", "ledger");
         Bookie.checkDirectoryStructure(Bookie.getCurrentDirectory(ledgerDir));
 
+        File indexDir = createTempDir("bookie", "index");
+        Bookie.checkDirectoryStructure(Bookie.getCurrentDirectory(indexDir));
+
         /*
          * add few entries to journal file.
          */
@@ -693,6 +701,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
         int port = PortManager.nextFreePort();
         conf.setBookiePort(port).setJournalDirName(journalDir.getPath())
+                .setIndexDirName(new String[] { indexDir.getPath() })
                 .setLedgerDirNames(new String[] { ledgerDir.getPath() }).setMetadataServiceUri(metadataServiceUri)
                 .setLedgerStorageClass(MockInterleavedLedgerStorage.class.getName());
 
@@ -850,6 +859,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration()
             .setJournalDirName(tmpDir.getPath())
             .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
             .setMetadataServiceUri(zkUtil.getMetadataServiceUri(zkRoot))
             .setZkTimeout(5000);
         try {
@@ -878,6 +888,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
                 .setLedgerStorageClass(InterleavedLedgerStorage.class.getName())
                 .setJournalDirName(tmpDir.getPath())
                 .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
                 .setDiskCheckInterval(1000)
                 .setDiskUsageThreshold((1.0f - ((float) usableSpace / (float) totalSpace)) * 0.999f)
                 .setDiskUsageWarnThreshold(0.0f)
@@ -932,6 +943,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration()
                 .setJournalDirName(tmpDir.getPath())
                 .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
                 .setDiskCheckInterval(1000)
                 .setDiskUsageThreshold((1.0f - ((float) usableSpace / (float) totalSpace)) * 0.999f)
                 .setDiskUsageWarnThreshold(0.0f)
@@ -991,6 +1003,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = newServerConfiguration()
             .setJournalDirName(tmpDir.getPath())
             .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
             .setDiskCheckInterval(1000)
             .setLedgerStorageClass(SortedLedgerStorage.class.getName())
             .setAutoRecoveryDaemonEnabled(false)
@@ -1199,6 +1212,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
         conf.setJournalDirName(tmpDir.getPath())
             .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
             .setReadOnlyModeEnabled(true)
             .setPersistBookieStatusEnabled(true)
             .setMetadataServiceUri(metadataServiceUri);
@@ -1236,6 +1250,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
         conf.setJournalDirName(tmpDir.getPath())
             .setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
             .setReadOnlyModeEnabled(true)
             .setPersistBookieStatusEnabled(true)
             .setMetadataServiceUri(metadataServiceUri);
@@ -1277,6 +1292,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
         conf.setJournalDirName(filePath[0])
             .setLedgerDirNames(filePath)
+                .setIndexDirName(filePath)
             .setReadOnlyModeEnabled(true)
             .setPersistBookieStatusEnabled(true)
             .setMetadataServiceUri(metadataServiceUri);
@@ -1316,6 +1332,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration();
         conf.setJournalDirName(filePath[0])
             .setLedgerDirNames(filePath)
+                .setIndexDirName(filePath)
             .setReadOnlyModeEnabled(true)
             .setPersistBookieStatusEnabled(true)
             .setMetadataServiceUri(metadataServiceUri);
@@ -1364,6 +1381,7 @@ public class BookieInitializationTest extends BookKeeperClusterTestCase {
 
         final ServerConfiguration conf = TestBKConfiguration.newServerConfiguration()
                 .setJournalDirName(tmpDir.getPath()).setLedgerDirNames(new String[] { tmpDir.getPath() })
+                .setIndexDirName(new String[] { tmpDir.getPath() })
                 .setBookiePort(PortManager.nextFreePort()).setMetadataServiceUri(metadataServiceUri)
                 .setListeningInterface(null);
 

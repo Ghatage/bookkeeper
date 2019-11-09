@@ -1199,7 +1199,7 @@ public class ServerConfiguration extends AbstractConfiguration<ServerConfigurati
 
         String[] indexDirs = this.getStringArray(INDEX_DIRS);
         if ((null == indexDirs) || (0 == indexDirs.length)) {
-            return new String[] { "/tmp/bk-data" };
+            return new String[] { "/tmp/bk-idx-data" };
         }
         return indexDirs;
     }

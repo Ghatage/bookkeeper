@@ -307,7 +307,9 @@ public abstract class BookKeeperClusterTestCase {
         for (int i = 0; i < ledgerDirs.length; i++) {
             ledgerDirNames[i] = ledgerDirs[i].getPath();
         }
+        String[] indexDirNames = ledgerDirNames.clone();
         conf.setLedgerDirNames(ledgerDirNames);
+        conf.setIndexDirName(indexDirNames);
         conf.setEnableTaskExecutionStats(true);
         conf.setAllocatorPoolingPolicy(PoolingPolicy.UnpooledHeap);
         return conf;
